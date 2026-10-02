@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Couch to 5k</title>
+
+<!-- PWA: lets a phone browser offer "Add to Home Screen" / "Install app",
+     and tells the OS what color chrome to draw around the page once
+     installed. Needs a real deployment to actually take effect — service
+     workers don't register inside the Claude artifact preview sandbox. -->
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#0A4D5E">
+
+<!-- iOS ignores manifest.json for most of this, so it needs its own tags
+     to behave like an installed app rather than a bookmarked website. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="C25K">
+<link rel="apple-touch-icon" href="./icons/icon-192.png">
+
+<style>
+  :root {
+    --bg: #FAF7F0; --surface: #FFFFFF; --surface-2: #F1ECE0; --border: #E7E0D2;
+    --text: #2E2A22; --text-muted: #8A8272;
+    --run-bg: #0A4D5E; --run-text: #FFFFFF;
+    --walk-bg: #D9CDBB; --walk-text: #5A4E3C;
+    --rest-bg: #EFE9DD; --rest-text: #6B5D45;
+    --accent: #0A4D5E;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1C1B17; --surface: #262420; --surface-2: #2E2B25; --border: #3C382F;
+      --text: #EDE8DC; --text-muted: #A69B87;
+      --run-bg: #1B6E85; --run-text: #FFFFFF;
+      --walk-bg: #4A4438; --walk-text: #E3D9C4;
+      --rest-bg: #33302A; --rest-text: #B5AC98;
+      --accent: #4FB8D6;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1C1B17; --surface: #262420; --surface-2: #2E2B25; --border: #3C382F;
+    --text: #EDE8DC; --text-muted: #A69B87;
+    --run-bg: #1B6E85; --run-text: #FFFFFF;
+    --walk-bg: #4A4438; --walk-text: #E3D9C4;
+    --rest-bg: #33302A; --rest-text: #B5AC98;
+    --accent: #4FB8D6;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
+    padding: 24px 16px;
+  }
+  .wrap { max-width: 480px; margin: 0 auto; }
+
+  header { margin-bottom: 20px; }
+  h1 { font-family: "Fraunces", Georgia, serif; font-size: 24px; font-weight: 500; margin: 0 0 2px; }
+  .tagline { font-size: 13px; color: var(--text-muted); margin: 0; }
+
+  .day-select-row { display: flex; gap: 8px; margin-bottom: 20px; }
+  .day-select-row select {
+    flex: 1; font-size: 14px; font-family: inherit; color: var(--text);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .day-select-row select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .day-select-row select:disabled { opacity: 0.5; }
+
+  .progress-track {
+    height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin-bottom: 20px;
+  }
+  .progress-fill { height: 100%; background: var(--accent); border-radius: 3px; width: 0%; transition: width 0.2s linear; }
+
+  .set-row { margin-bottom: 16px; }
+  .set-label { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+  .set-dots { display: flex; gap: 5px; flex-wrap: wrap; }
+  .set-dot {
+    width: 10px; height: 10px; border-radius: 50%; background: var(--surface-2);
+    border: 1px solid var(--border); flex-shrink: 0;
+  }
+  .set-dot.done { background: var(--accent); border-color: var(--accent); opacity: 0.5; }
+  .set-dot.current { background: var(--accent); border-color: var(--accent); }
+
+  .stage {
+    border-radius: 20px; padding: 40px 24px; text-align: center; margin-bottom: 20px;
+    transition: background 0.2s ease, color 0.2s ease;
+  }
+  .stage .eyebrow { font-size: 13px; opacity: 0.85; margin-bottom: 10px; }
+  .stage .interval-label {
+    font-family: "Fraunces", Georgia, serif; font-size: 40px; font-weight: 500; margin-bottom: 12px;
+  }
+  .stage .countdown { font-size: 48px; font-weight: 500; font-variant-numeric: tabular-nums; margin-bottom: 8px; }
+  .stage .up-next { font-size: 13px; opacity: 0.85; }
+
+  .controls { display: flex; gap: 8px; margin-bottom: 16px; }
+  .btn {
+    flex: 1; font-size: 15px; font-weight: 500; padding: 14px; border-radius: 12px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: inherit;
+  }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn.primary { background: var(--accent); color: var(--run-text); border-color: var(--accent); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .status-line { text-align: center; font-size: 12px; color: var(--text-muted); }
+
+  .disclaimer {
+    margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--border);
+    font-size: 12px; color: var(--text-muted); line-height: 1.6;
+  }
+
+  .history-toggle {
+    background: none; border: none; padding: 0; cursor: pointer;
+    font-size: 12px; color: var(--accent); font-family: inherit; text-decoration: underline;
+  }
+  .history-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .history-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+
+  .history-panel { margin-bottom: 20px; }
+  .history-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .history-list li {
+    display: flex; justify-content: space-between; gap: 12px;
+    font-size: 13px; padding: 8px 10px; border-radius: 8px; background: var(--surface-2);
+  }
+  .history-list .entry-day { color: var(--text); }
+  .history-list .entry-date { color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .history-empty { font-size: 12px; color: var(--text-muted); margin-top: 10px; }
+
+  .action-row { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+
+  .custom-badge {
+    display: inline-block; font-size: 11px; font-weight: 500; padding: 2px 8px;
+    border-radius: 999px; background: var(--surface-2); color: var(--text-muted);
+    margin-left: 6px; vertical-align: middle;
+  }
+
+  .editor-panel { margin-bottom: 20px; }
+  .editor-list {
+    display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto;
+    margin-bottom: 12px;
+  }
+  .editor-row {
+    display: flex; align-items: center; gap: 8px; font-size: 13px;
+    padding: 6px 10px; border-radius: 8px; background: var(--surface-2);
+  }
+  .editor-row-label { flex: 1; color: var(--text); }
+  .editor-input {
+    width: 64px; font-size: 13px; font-family: inherit; color: var(--text);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: 4px 6px; font-variant-numeric: tabular-nums;
+  }
+  .editor-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .editor-preview { width: 44px; font-size: 12px; color: var(--text-muted); text-align: right; font-variant-numeric: tabular-nums; }
+  .editor-actions { display: flex; gap: 8px; }
+
+  .backfill-panel { margin-bottom: 20px; }
+  .backfill-row { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .backfill-field {
+    flex: 1; min-width: 100px; font-size: 13px; font-family: inherit; color: var(--text);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  }
+  .backfill-field:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500&family=Inter:wght@400;500&display=swap">
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <h1>Couch to 5k</h1>
+    <p class="tagline">Week <span id="weekLabel"></span>, day <span id="dayLabel"></span><span class="custom-badge" id="customBadge" hidden>Custom</span></p>
+  </header>
+
+  <div class="day-select-row">
+    <select id="weekSelect" aria-label="Week"></select>
+    <select id="daySelect" aria-label="Day"></select>
+  </div>
+
+  <div class="action-row">
+    <button class="history-toggle" id="repeatWeekBtn" type="button">Repeat this week</button>
+    <button class="history-toggle" id="editIntervalsBtn" type="button" aria-expanded="false" aria-controls="editorPanel">Edit intervals</button>
+    <button class="history-toggle" id="backfillBtn" type="button" aria-expanded="false" aria-controls="backfillPanel">Log a past workout</button>
+  </div>
+
+  <div class="backfill-panel" id="backfillPanel" hidden>
+    <div class="backfill-row">
+      <select class="backfill-field" id="backfillWeekSelect" aria-label="Week to log"></select>
+      <select class="backfill-field" id="backfillDaySelect" aria-label="Day to log"></select>
+      <input class="backfill-field" id="backfillDate" type="datetime-local" aria-label="Date and time completed">
+    </div>
+    <button class="btn" id="backfillLogBtn" type="button">Log it</button>
+  </div>
+
+  <div class="editor-panel" id="editorPanel" hidden>
+    <div class="editor-list" id="editorList"></div>
+    <div class="editor-actions">
+      <button class="btn" id="editorSaveBtn" type="button">Save changes</button>
+      <button class="btn" id="editorResetBtn" type="button">Reset to standard</button>
+    </div>
+  </div>
+
+  <div class="history-row" style="margin-bottom: 20px;">
+    <p class="status-line" id="completedStat" style="margin: 0;"></p>
+    <button class="history-toggle" id="historyToggle" type="button" aria-expanded="false" aria-controls="historyPanel">View history</button>
+  </div>
+
+  <div class="history-panel" id="historyPanel" hidden>
+    <ul class="history-list" id="historyList"></ul>
+    <p class="history-empty" id="historyEmpty">No workouts logged yet. Finish one and it'll show up here.</p>
+  </div>
+
+  <div class="set-row" id="setRow" hidden>
+    <div class="set-label" id="setLabel"></div>
+    <div class="set-dots" id="setDots"></div>
+  </div>
+
+  <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+
+  <div class="stage" id="stage">
+    <div class="eyebrow" id="stageEyebrow"></div>
+    <div class="interval-label" id="stageLabel"></div>
+    <div class="countdown" id="stageCountdown"></div>
+    <div class="up-next" id="stageUpNext"></div>
+  </div>
+
+  <div class="controls">
+    <button class="btn primary" id="startBtn" type="button">Start</button>
+    <button class="btn" id="pauseBtn" type="button" disabled>Pause</button>
+    <button class="btn" id="resetBtn" type="button">Reset</button>
+  </div>
+
+  <p class="status-line" id="statusLine"></p>
+
+  <div class="disclaimer">
+    Your current week/day and workout history are saved on this device only — no accounts, nothing sent anywhere. Reloading mid-workout still restarts that day from the beginning; it just restarts the correct one.
+  </div>
+</div>
+
+<script type="module">
+  import { SCHEDULE } from "./src/schedule.js";
+  import { getWorkoutState, getSetInfo } from "./src/timerEngine.js";
+  import { createWorkoutClock } from "./src/workoutClock.js";
+  import { createCueController } from "./src/cueController.js";
+  import { loadProgress, saveProgress, recordCompletion, isFinalDay, setActiveDay, restartAtWeek } from "./src/progressStore.js";
+  import { loadOverrides, saveOverrides, getEffectiveDay, hasOverride, setOverrideDay, clearOverrideDay } from "./src/customSchedule.js";
+
+  const TYPE_STYLE = {
+    warmup: { bgVar: "--rest-bg", textVar: "--rest-text", label: "Warm up" },
+    cooldown: { bgVar: "--rest-bg", textVar: "--rest-text", label: "Cool down" },
+    run: { bgVar: "--run-bg", textVar: "--run-text", label: "Run" },
+    walk: { bgVar: "--walk-bg", textVar: "--walk-text", label: "Walk" },
+  };
+
+  function fmt(sec) {
+    const m = Math.floor(sec / 60);
+    const s = Math.round(sec % 60);
+    return m + ":" + String(s).padStart(2, "0");
+  }
+
+  // "YYYY-MM-DDTHH:MM" in LOCAL time — the format a datetime-local input
+  // both reads and writes. Used for the field's default value, its max
+  // (can't log a workout that hasn't happened yet), and the future-date
+  // check, since same-format zero-padded strings compare correctly with
+  // plain < / > the same way their dates would.
+  function nowLocalDateTimeStr() {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
+      "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+
+  // A datetime-local value has no timezone suffix, so unlike a bare date
+  // string ("YYYY-MM-DD", which new Date() reads as UTC and can shift a
+  // day), this is read as local time directly — no manual reconstruction
+  // needed.
+  function localDateTimeStrToISO(value) {
+    return new Date(value).toISOString();
+  }
+
+  // ---- Elements ----
+  const weekSelect = document.getElementById("weekSelect");
+  const daySelect = document.getElementById("daySelect");
+  const progressFill = document.getElementById("progressFill");
+  const stage = document.getElementById("stage");
+  const stageEyebrow = document.getElementById("stageEyebrow");
+  const stageLabel = document.getElementById("stageLabel");
+  const stageCountdown = document.getElementById("stageCountdown");
+  const stageUpNext = document.getElementById("stageUpNext");
+  const startBtn = document.getElementById("startBtn");
+  const pauseBtn = document.getElementById("pauseBtn");
+  const resetBtn = document.getElementById("resetBtn");
+  const statusLine = document.getElementById("statusLine");
+  const weekLabel = document.getElementById("weekLabel");
+  const dayLabel = document.getElementById("dayLabel");
+  const completedStat = document.getElementById("completedStat");
+  const historyToggle = document.getElementById("historyToggle");
+  const historyPanel = document.getElementById("historyPanel");
+  const historyList = document.getElementById("historyList");
+  const historyEmpty = document.getElementById("historyEmpty");
+  const setRow = document.getElementById("setRow");
+  const setLabel = document.getElementById("setLabel");
+  const setDots = document.getElementById("setDots");
+  const customBadge = document.getElementById("customBadge");
+  const repeatWeekBtn = document.getElementById("repeatWeekBtn");
+  const editIntervalsBtn = document.getElementById("editIntervalsBtn");
+  const editorPanel = document.getElementById("editorPanel");
+  const editorList = document.getElementById("editorList");
+  const editorSaveBtn = document.getElementById("editorSaveBtn");
+  const editorResetBtn = document.getElementById("editorResetBtn");
+  const backfillBtn = document.getElementById("backfillBtn");
+  const backfillPanel = document.getElementById("backfillPanel");
+  const backfillWeekSelect = document.getElementById("backfillWeekSelect");
+  const backfillDaySelect = document.getElementById("backfillDaySelect");
+  const backfillDate = document.getElementById("backfillDate");
+  const backfillLogBtn = document.getElementById("backfillLogBtn");
+
+  // ---- State: which day is selected, plus the clock and cue controller ----
+  let progress = loadProgress();
+  let overrides = loadOverrides();
+  let weekIndex = progress.lastViewedWeekIndex;
+  let dayIndex = progress.lastViewedDayIndex;
+  const clock = createWorkoutClock();
+  const cues = createCueController();
+  let tickHandle = null;
+  let wakeLock = null;
+  let persistedThisCompletion = false; // guards against logging one completion twice
+  let repeatConfirmPending = false;    // "tap again to confirm" state for Repeat this week
+  let repeatConfirmTimer = null;
+
+  function updateCompletedStat() {
+    const n = progress.history.length;
+    completedStat.textContent = n === 0
+      ? "No workouts logged yet"
+      : n + " workout" + (n === 1 ? "" : "s") + " completed";
+  }
+
+  function formatCompletedAt(iso) {
+    const d = new Date(iso);
+    // Falls back to the raw string if this browser can't parse it — better
+    // than showing "Invalid Date" for something a person will actually read.
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) +
+      ", " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  }
+
+  function renderHistory() {
+    // Sorted by the actual completed date, not insertion order — a
+    // backfilled entry for an earlier date can be added after later
+    // entries already exist, so insertion order alone would misorder it.
+    const entries = [...progress.history].sort(
+      (a, b) => new Date(b.completedAt) - new Date(a.completedAt)
+    );
+    historyList.innerHTML = "";
+    historyEmpty.hidden = entries.length > 0;
+    entries.forEach((entry) => {
+      const li = document.createElement("li");
+      const dayEl = document.createElement("span");
+      dayEl.className = "entry-day";
+      dayEl.textContent = "Week " + SCHEDULE[entry.weekIndex].week + ", day " + (entry.dayIndex + 1);
+      const dateEl = document.createElement("span");
+      dateEl.className = "entry-date";
+      dateEl.textContent = formatCompletedAt(entry.completedAt);
+      li.appendChild(dayEl);
+      li.appendChild(dateEl);
+      historyList.appendChild(li);
+    });
+  }
+
+  function currentDay() { return getEffectiveDay(SCHEDULE, weekIndex, dayIndex, overrides); }
+
+  function populateSelectors() {
+    weekSelect.innerHTML = "";
+    SCHEDULE.forEach((w, i) => {
+      const opt = document.createElement("option");
+      opt.value = i;
+      opt.textContent = "Week " + w.week;
+      weekSelect.appendChild(opt);
+    });
+    weekSelect.value = weekIndex;
+
+    daySelect.innerHTML = "";
+    SCHEDULE[weekIndex].days.forEach((_, i) => {
+      const opt = document.createElement("option");
+      opt.value = i;
+      opt.textContent = "Day " + (i + 1);
+      daySelect.appendChild(opt);
+    });
+    daySelect.value = dayIndex;
+
+    weekLabel.textContent = SCHEDULE[weekIndex].week;
+    dayLabel.textContent = dayIndex + 1;
+  }
+
+  // ---- Render-only: safe to call anytime, never speaks ----
+  function renderOnly() {
+    const day = currentDay();
+    const totalSec = day.reduce((sum, iv) => sum + iv.duration, 0);
+    const state = getWorkoutState(day, clock.getElapsedSeconds());
+    const style = TYPE_STYLE[state.interval.type];
+
+    stage.style.background = "var(" + style.bgVar + ")";
+    stage.style.color = "var(" + style.textVar + ")";
+    stageEyebrow.textContent = state.isComplete
+      ? "Workout complete"
+      : "Interval " + (state.intervalIndex + 1) + " of " + day.length;
+    stageLabel.textContent = style.label;
+    stageCountdown.textContent = state.isComplete ? "🎉" : fmt(state.remainingInInterval);
+
+    const next = day[state.intervalIndex + 1];
+    stageUpNext.textContent = state.isComplete
+      ? ""
+      : next
+        ? "Then: " + TYPE_STYLE[next.type].label
+        : "Last interval";
+
+    progressFill.style.width = Math.min(100, (state.totalElapsed / totalSec) * 100) + "%";
+    renderSetInfo(day, state);
+    customBadge.hidden = !hasOverride(weekIndex, dayIndex, overrides);
+    return state;
+  }
+
+  // Only worth showing for days built from repeated run/walk cycles — a
+  // continuous-run day (totalSets <= 1) has nothing to group, so the row
+  // stays hidden rather than showing a meaningless "Set 1 of 1."
+  function renderSetInfo(day, state) {
+    const { setNumber, totalSets } = getSetInfo(day, state.intervalIndex);
+    if (totalSets <= 1) {
+      setRow.hidden = true;
+      return;
+    }
+    setRow.hidden = false;
+    setLabel.textContent = state.isComplete
+      ? "All " + totalSets + " sets complete"
+      : setNumber === 0
+        ? "Warming up — " + totalSets + " sets ahead"
+        : "Set " + setNumber + " of " + totalSets;
+
+    setDots.innerHTML = "";
+    for (let i = 1; i <= totalSets; i++) {
+      const dot = document.createElement("span");
+      dot.className = "set-dot" + (i < setNumber || state.isComplete ? " done" : i === setNumber ? " current" : "");
+      setDots.appendChild(dot);
+    }
+  }
+
+  // ---- The running loop: renders AND may speak ----
+  function tick() {
+    const state = renderOnly();
+    cues.notify(state);
+    if (state.isComplete) {
+      if (!persistedThisCompletion) {
+        persistedThisCompletion = true;
+        const wasFinalDay = isFinalDay(weekIndex, dayIndex);
+        progress = recordCompletion(progress, weekIndex, dayIndex);
+        saveProgress(progress);
+        updateCompletedStat();
+        renderHistory();
+
+        // Move on to wherever progress now points, so the next visit is
+        // already on the next workout. This also resets the clock/cues for
+        // that new day, so Start doesn't inherit the finished day's state.
+        weekIndex = progress.currentWeekIndex;
+        dayIndex = progress.currentDayIndex;
+        clock.reset();
+        cues.reset();
+        persistedThisCompletion = false;
+        populateSelectors();
+        renderOnly();
+
+        statusLine.textContent = wasFinalDay
+          ? "Program complete — nice work finishing all nine weeks."
+          : "Nice work — workout complete. Moved you on to the next day.";
+      }
+      stopLoop();
+    }
+  }
+
+  async function requestWakeLock() {
+    try {
+      if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen");
+    } catch (e) {
+      // Not fatal — some browsers refuse this outside certain contexts. The
+      // workout still runs fine; your screen may just dim on its own.
+      wakeLock = null;
+    }
+  }
+  function releaseWakeLock() {
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  }
+
+  function startLoop() {
+    if (clock.isRunning()) return;
+    clock.start();
+    requestWakeLock();
+    startBtn.disabled = true;
+    pauseBtn.disabled = false;
+    weekSelect.disabled = true;
+    daySelect.disabled = true;
+    statusLine.textContent = "";
+    tickHandle = setInterval(tick, 200);
+    tick();
+  }
+
+  function stopLoop() {
+    clock.pause();
+    releaseWakeLock();
+    clearInterval(tickHandle);
+    startBtn.disabled = false;
+    pauseBtn.disabled = true;
+    weekSelect.disabled = false;
+    daySelect.disabled = false;
+  }
+
+  function resetAll() {
+    clearInterval(tickHandle);
+    clock.reset();
+    cues.reset();
+    releaseWakeLock();
+    persistedThisCompletion = false;
+    startBtn.disabled = false;
+    pauseBtn.disabled = true;
+    weekSelect.disabled = false;
+    daySelect.disabled = false;
+    statusLine.textContent = "";
+    renderOnly(); // display only — no cue
+  }
+
+  function selectDay(newWeekIndex, newDayIndex) {
+    weekIndex = newWeekIndex;
+    dayIndex = newDayIndex;
+    // Persisted immediately — independent of whether this day ever gets
+    // completed, so a reload always comes back to whatever's on screen.
+    progress = setActiveDay(progress, weekIndex, dayIndex);
+    saveProgress(progress);
+    populateSelectors();
+    resetAll();
+    // The editor, the backfill form, and the repeat-confirm state all
+    // refer to a specific day/week; none should carry over once you've
+    // navigated away.
+    closeEditor();
+    closeBackfill();
+    cancelRepeatConfirm();
+  }
+
+  // ---- Interval editor: durations only, layered via customSchedule.js ----
+  function populateEditor() {
+    const day = currentDay();
+    editorList.innerHTML = "";
+    day.forEach((iv, i) => {
+      const row = document.createElement("div");
+      row.className = "editor-row";
+
+      const label = document.createElement("span");
+      label.className = "editor-row-label";
+      label.textContent = (i + 1) + ". " + TYPE_STYLE[iv.type].label;
+
+      const preview = document.createElement("span");
+      preview.className = "editor-preview";
+      preview.textContent = fmt(iv.duration);
+
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = "1";
+      input.max = "10800";
+      input.step = "1";
+      input.value = iv.duration;
+      input.className = "editor-input";
+      input.setAttribute("aria-label", TYPE_STYLE[iv.type].label + " duration in seconds, interval " + (i + 1));
+      input.addEventListener("input", () => {
+        const v = Math.max(1, Math.min(10800, Number(input.value) || 1));
+        preview.textContent = fmt(v);
+      });
+
+      row.appendChild(label);
+      row.appendChild(input);
+      row.appendChild(preview);
+      editorList.appendChild(row);
+    });
+  }
+
+  function closeEditor() {
+    editorPanel.hidden = true;
+    editIntervalsBtn.setAttribute("aria-expanded", "false");
+    editIntervalsBtn.textContent = "Edit intervals";
+  }
+
+  editIntervalsBtn.addEventListener("click", () => {
+    const opening = editorPanel.hidden;
+    if (opening) {
+      populateEditor();
+      editorPanel.hidden = false;
+      editIntervalsBtn.setAttribute("aria-expanded", "true");
+      editIntervalsBtn.textContent = "Hide editor";
+    } else {
+      closeEditor();
+    }
+  });
+
+  editorSaveBtn.addEventListener("click", () => {
+    const inputs = editorList.querySelectorAll(".editor-input");
+    const newDurations = Array.from(inputs).map((inp) =>
+      Math.max(1, Math.min(10800, Math.round(Number(inp.value) || 1)))
+    );
+    overrides = setOverrideDay(SCHEDULE, weekIndex, dayIndex, newDurations, overrides);
+    saveOverrides(overrides);
+    resetAll(); // this day's intervals changed — clock/cues must start clean
+    statusLine.textContent = "Saved custom intervals for this day.";
+  });
+
+  editorResetBtn.addEventListener("click", () => {
+    overrides = clearOverrideDay(weekIndex, dayIndex, overrides);
+    saveOverrides(overrides);
+    resetAll();
+    populateEditor(); // refresh the fields back to stock values
+    statusLine.textContent = "Reset to the standard schedule for this day.";
+  });
+
+  // ---- Repeat this week: a deliberate backward move, confirmed by a
+  // second tap rather than a dialog (keeps this consistent with how the
+  // page behaves everywhere it's previewed, not just once deployed). ----
+  function cancelRepeatConfirm() {
+    repeatConfirmPending = false;
+    clearTimeout(repeatConfirmTimer);
+    repeatWeekBtn.textContent = "Repeat this week";
+  }
+
+  repeatWeekBtn.addEventListener("click", () => {
+    if (!repeatConfirmPending) {
+      repeatConfirmPending = true;
+      repeatWeekBtn.textContent = "Tap again to confirm";
+      repeatConfirmTimer = setTimeout(cancelRepeatConfirm, 4000);
+      return;
+    }
+    cancelRepeatConfirm();
+    progress = restartAtWeek(progress, weekIndex);
+    saveProgress(progress);
+    dayIndex = 0;
+    populateSelectors();
+    resetAll();
+    statusLine.textContent = "Moved your saved position back to the start of week " + SCHEDULE[weekIndex].week + ".";
+  });
+
+  // ---- Log a past workout: backfills history/progress exactly like a
+  // live completion would, since recordCompletion() doesn't distinguish
+  // between the two — it just needs a week, a day, and a timestamp. ----
+  function populateBackfillSelectors() {
+    backfillWeekSelect.innerHTML = "";
+    SCHEDULE.forEach((w, i) => {
+      const opt = document.createElement("option");
+      opt.value = i;
+      opt.textContent = "Week " + w.week;
+      backfillWeekSelect.appendChild(opt);
+    });
+    backfillWeekSelect.value = weekIndex; // defaults to whatever's currently on screen
+    refreshBackfillDays();
+  }
+
+  function refreshBackfillDays() {
+    const wk = Number(backfillWeekSelect.value);
+    backfillDaySelect.innerHTML = "";
+    SCHEDULE[wk].days.forEach((_, i) => {
+      const opt = document.createElement("option");
+      opt.value = i;
+      opt.textContent = "Day " + (i + 1);
+      backfillDaySelect.appendChild(opt);
+    });
+  }
+
+  backfillWeekSelect.addEventListener("change", refreshBackfillDays);
+
+  function closeBackfill() {
+    backfillPanel.hidden = true;
+    backfillBtn.setAttribute("aria-expanded", "false");
+    backfillBtn.textContent = "Log a past workout";
+  }
+
+  backfillBtn.addEventListener("click", () => {
+    const opening = backfillPanel.hidden;
+    if (opening) {
+      populateBackfillSelectors();
+      backfillDate.value = nowLocalDateTimeStr();
+      backfillDate.max = nowLocalDateTimeStr(); // can't log a workout that hasn't happened yet
+      backfillPanel.hidden = false;
+      backfillBtn.setAttribute("aria-expanded", "true");
+      backfillBtn.textContent = "Hide log form";
+    } else {
+      closeBackfill();
+    }
+  });
+
+  backfillLogBtn.addEventListener("click", () => {
+    const wk = Number(backfillWeekSelect.value);
+    const dy = Number(backfillDaySelect.value);
+    const dateStr = backfillDate.value;
+    if (!dateStr) { statusLine.textContent = "Pick a date and time first."; return; }
+    if (dateStr > nowLocalDateTimeStr()) { statusLine.textContent = "Can't log a workout in the future."; return; }
+
+    progress = recordCompletion(progress, wk, dy, localDateTimeStrToISO(dateStr));
+    saveProgress(progress);
+    updateCompletedStat();
+    renderHistory();
+
+    // If the day just logged happens to match your saved position, this
+    // advances it exactly like a live completion would (recordCompletion
+    // already handles that); otherwise lastViewed is untouched and so is
+    // the view below.
+    weekIndex = progress.lastViewedWeekIndex;
+    dayIndex = progress.lastViewedDayIndex;
+    populateSelectors();
+    resetAll();
+    closeBackfill();
+    statusLine.textContent = "Logged week " + SCHEDULE[wk].week + ", day " + (dy + 1) + ".";
+  });
+
+  weekSelect.addEventListener("change", () => selectDay(Number(weekSelect.value), 0));
+  daySelect.addEventListener("change", () => selectDay(weekIndex, Number(daySelect.value)));
+
+  startBtn.addEventListener("click", startLoop);
+  pauseBtn.addEventListener("click", () => { statusLine.textContent = "Paused."; stopLoop(); });
+  resetBtn.addEventListener("click", resetAll);
+
+  historyToggle.addEventListener("click", () => {
+    const nowOpen = historyPanel.hidden; // about to open
+    historyPanel.hidden = !nowOpen;
+    historyToggle.setAttribute("aria-expanded", String(nowOpen));
+    historyToggle.textContent = nowOpen ? "Hide history" : "View history";
+  });
+
+  // Re-sync the display if the tab was backgrounded and throttled, so the
+  // countdown doesn't sit stale when you look back at it.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && clock.isRunning()) tick();
+  });
+
+  populateSelectors();
+  updateCompletedStat();
+  renderHistory();
+  renderOnly(); // initial paint — no cue
+
+  // Register the service worker that caches the app shell for offline use.
+  // Feature-detected and wrapped in try/catch because this is expected to
+  // no-op in some contexts (it will silently fail inside the Claude
+  // artifact preview, since that runs in a sandboxed iframe with no
+  // serviceWorker support) and should never block the app itself from
+  // working if registration fails for any reason.
+  if ("serviceWorker" in navigator) {
+    try {
+      navigator.serviceWorker.register("./sw.js");
+    } catch (e) {
+      // Not fatal — the app still works online, it just won't cache for
+      // offline use this time.
+    }
+  }
+</script>
+
+</body>
+</html>
