@@ -247,6 +247,10 @@
   import { getWorkoutState, getSetInfo } from "./src/timerEngine.js";
   import { createWorkoutClock } from "./src/workoutClock.js";
   import { createCueController } from "./src/cueController.js";
+  import {
+    startKeepAliveAudio, stopKeepAliveAudio,
+    setMediaSessionInfo, setMediaSessionPlaybackState,
+  } from "./src/audioCues.js";
   import { loadProgress, saveProgress, recordCompletion, isFinalDay, setActiveDay, restartAtWeek } from "./src/progressStore.js";
   import { loadOverrides, saveOverrides, getEffectiveDay, hasOverride, setOverrideDay, clearOverrideDay } from "./src/customSchedule.js";
 
@@ -422,6 +426,15 @@
     progressFill.style.width = Math.min(100, (state.totalElapsed / totalSec) * 100) + "%";
     renderSetInfo(day, state);
     customBadge.hidden = !hasOverride(weekIndex, dayIndex, overrides);
+
+    // Lock-screen "now playing" info. This is display only, same as
+    // everything else in renderOnly() — it never makes sound, so it's
+    // safe to call on every render, including page load and Reset.
+    setMediaSessionInfo(
+      state.isComplete ? "Workout complete" : style.label,
+      "Week " + SCHEDULE[weekIndex].week + ", day " + (dayIndex + 1) +
+        (state.isComplete ? "" : " — " + fmt(state.remainingInInterval) + " left")
+    );
     return state;
   }
 
@@ -498,6 +511,8 @@
     if (clock.isRunning()) return;
     clock.start();
     requestWakeLock();
+    startKeepAliveAudio();
+    setMediaSessionPlaybackState("playing");
     startBtn.disabled = true;
     pauseBtn.disabled = false;
     weekSelect.disabled = true;
@@ -510,6 +525,8 @@
   function stopLoop() {
     clock.pause();
     releaseWakeLock();
+    stopKeepAliveAudio();
+    setMediaSessionPlaybackState("paused");
     clearInterval(tickHandle);
     startBtn.disabled = false;
     pauseBtn.disabled = true;
@@ -522,6 +539,8 @@
     clock.reset();
     cues.reset();
     releaseWakeLock();
+    stopKeepAliveAudio();
+    setMediaSessionPlaybackState("paused");
     persistedThisCompletion = false;
     startBtn.disabled = false;
     pauseBtn.disabled = true;
@@ -737,6 +756,23 @@
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && clock.isRunning()) tick();
   });
+
+  // Lets the lock-screen media controls (and a paired watch/earbuds
+  // button) start and pause a workout without unlocking the phone —
+  // a reasonable bonus once the app has a real media session at all,
+  // and it reuses the exact same start/stop path the on-screen buttons do.
+  if ("mediaSession" in navigator) {
+    try {
+      navigator.mediaSession.setActionHandler("play", () => startLoop());
+      navigator.mediaSession.setActionHandler("pause", () => {
+        statusLine.textContent = "Paused.";
+        stopLoop();
+      });
+    } catch (e) {
+      // Action handlers unsupported — lock-screen info (set elsewhere)
+      // still shows, it just won't be controllable from there.
+    }
+  }
 
   populateSelectors();
   updateCompletedStat();

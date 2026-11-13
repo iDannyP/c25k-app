@@ -8,10 +8,15 @@
 // content matters is after *you* ship a code change, which is exactly what
 // CACHE_NAME's version suffix is for (see activate below).
 //
-// Bump CACHE_NAME whenever any cached file's contents change. Anything
-// requested that ISN'T in this list (there isn't anything else right now)
-// just falls through to the network, uncached.
-const CACHE_NAME = "c25k-shell-v1";
+// Bump CACHE_NAME whenever any cached file's contents change — the
+// service worker file itself has to change bytes for the browser to
+// notice there's an update at all, so a content-only change elsewhere
+// (like the v1 -> v2 bump below, after reworking the audio-cue timing)
+// needs this line touched too, or installed copies keep serving the old
+// cached files indefinitely. Anything requested that ISN'T in the list
+// below (there isn't anything else right now) just falls through to the
+// network, uncached.
+const CACHE_NAME = "c25k-shell-v2";
 
 const SHELL_FILES = [
   "./",
